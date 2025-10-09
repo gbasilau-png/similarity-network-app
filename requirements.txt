@@ -1,6 +1,6 @@
-dash==2.14.1
-dash-table==5.0.0
-plotly==5.17.0
-networkx==3.1
-pandas==2.0.3
-gunicorn==21.2.0
+dash==2.14.1 
+dash-table==5.0.0 
+plotly==5.17.0 
+networkx==3.1 
+pandas==1.5.3 
+gunicorn==21.2.0 
