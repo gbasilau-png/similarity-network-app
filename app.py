@@ -240,6 +240,7 @@ app.layout = html.Div([
             ],
             sort_action='native',
             filter_action='native',
+            filter_options={'case': 'insensitive'},
             page_action='native',
             page_size=10,
             row_selectable='single'
