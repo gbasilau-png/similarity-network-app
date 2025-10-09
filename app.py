@@ -154,7 +154,7 @@ def weight_input_block(label, input_id, slider_id, default_value):
     ], style={'padding':'15px', 'margin':'10px', 'backgroundColor':'#f8f9fa', 'borderRadius':'8px'})
 
 # -------------------------------
-# Layout
+# Layout (Stacked - Graph TOP, Table BOTTOM)
 # -------------------------------
 app.layout = html.Div([
     html.H1("Joint Weighted Network Visualization", 
@@ -203,49 +203,48 @@ app.layout = html.Div([
         'borderRadius': '8px'
     }),
     
-    # Graph and table section
+    # Graph (TOP - Full Width)
     html.Div([
-        html.Div([
-            dcc.Graph(id='network-graph')
-        ], style={'width': '65%', 'display': 'inline-block', 'verticalAlign': 'top'}),
-        
-        html.Div([
-            html.H4("Sample Pairs Above Threshold", 
-                   style={'color': '#000', 'textAlign': 'center', 'marginBottom': '15px'}),
-            dash_table.DataTable(
-                id='edge-table',
-                columns=[
-                    {'name': 'Sample 1', 'id': 'Sample_1', 'type': 'text'},
-                    {'name': 'Sample 2', 'id': 'Sample_2', 'type': 'text'},
-                    {'name': 'Joint Similarity', 'id': 'Joint_Similarity', 'type': 'numeric', 'format': {'specifier': '.3f'}},
-                    {'name': 'Common Substances', 'id': 'Key_Substances', 'type': 'text'}
-                ],
-                style_table={'overflowX': 'auto', 'maxHeight': '600px', 'overflowY': 'auto'},
-                style_cell={
-                    'textAlign': 'center', 
-                    'fontSize': '14px',
-                    'padding': '10px',
-                    'minWidth': '100px'
-                },
-                style_header={
-                    'backgroundColor': 'rgb(230, 230, 230)',
-                    'fontWeight': 'bold',
-                    'fontSize': '14px'
-                },
-                style_data_conditional=[
-                    {
-                        'if': {'row_index': 'odd'},
-                        'backgroundColor': 'rgb(248, 248, 248)'
-                    }
-                ],
-                sort_action='native',
-                filter_action='native',
-                page_action='native',
-                page_size=10,
-                row_selectable='single'
-            )
-        ], style={'width': '34%', 'display': 'inline-block', 'verticalAlign': 'top', 'paddingLeft': '20px'})
-    ], style={'marginTop': '20px'})
+        dcc.Graph(id='network-graph')
+    ], style={'width': '100%', 'marginTop': '20px', 'marginBottom': '30px'}),
+    
+    # Table (BOTTOM - Full Width)
+    html.Div([
+        html.H4("Sample Pairs Above Threshold", 
+               style={'color': '#000', 'textAlign': 'center', 'marginBottom': '15px'}),
+        dash_table.DataTable(
+            id='edge-table',
+            columns=[
+                {'name': 'Sample 1', 'id': 'Sample_1', 'type': 'text'},
+                {'name': 'Sample 2', 'id': 'Sample_2', 'type': 'text'},
+                {'name': 'Joint Similarity', 'id': 'Joint_Similarity', 'type': 'numeric', 'format': {'specifier': '.3f'}},
+                {'name': 'Common Substances', 'id': 'Key_Substances', 'type': 'text'}
+            ],
+            style_table={'overflowX': 'auto', 'maxHeight': '600px', 'overflowY': 'auto'},
+            style_cell={
+                'textAlign': 'center', 
+                'fontSize': '14px',
+                'padding': '10px',
+                'minWidth': '100px'
+            },
+            style_header={
+                'backgroundColor': 'rgb(230, 230, 230)',
+                'fontWeight': 'bold',
+                'fontSize': '14px'
+            },
+            style_data_conditional=[
+                {
+                    'if': {'row_index': 'odd'},
+                    'backgroundColor': 'rgb(248, 248, 248)'
+                }
+            ],
+            sort_action='native',
+            filter_action='native',
+            page_action='native',
+            page_size=10,
+            row_selectable='single'
+        )
+    ], style={'width': '100%', 'marginTop': '10px'})
     
 ], style={'backgroundColor': '#ffffff', 'color': '#000', 'padding': '20px', 'fontFamily': 'Arial, sans-serif'})
 
