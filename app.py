@@ -206,37 +206,46 @@ app.layout = html.Div([
         'borderRadius': '8px'
     }),
     
-    # Save buttons section
+    # Graph (TOP - Full Width) with Export Button
     html.Div([
-        html.H4("Save Current Results", style={'color': '#000', 'marginBottom': '15px', 'textAlign': 'center'}),
         html.Div([
-            html.Button("💾 Save Network Diagram as PNG", 
-                       id='save-diagram-btn',
-                       style={'margin': '10px', 'padding': '10px 20px', 'fontSize': '14px', 
-                              'backgroundColor': '#4CAF50', 'color': 'white', 'border': 'none', 
-                              'borderRadius': '5px', 'cursor': 'pointer'}),
-            html.Button("📊 Save Table as CSV", 
-                       id='save-table-btn',
-                       style={'margin': '10px', 'padding': '10px 20px', 'fontSize': '14px', 
-                              'backgroundColor': '#2196F3', 'color': 'white', 'border': 'none', 
-                              'borderRadius': '5px', 'cursor': 'pointer'}),
-            html.Button("📋 Save Table as Excel", 
-                       id='save-excel-btn',
-                       style={'margin': '10px', 'padding': '10px 20px', 'fontSize': '14px', 
-                              'backgroundColor': '#FF9800', 'color': 'white', 'border': 'none', 
-                              'borderRadius': '5px', 'cursor': 'pointer'})
-        ], style={'display': 'flex', 'justifyContent': 'center', 'flexWrap': 'wrap'})
-    ], style={'padding': '20px', 'marginBottom': '20px', 'backgroundColor': '#f0f8ff', 'borderRadius': '8px', 'border': '1px solid #007bff'}),
-    
-    # Graph (TOP - Full Width)
-    html.Div([
-        dcc.Graph(id='network-graph')
+            html.H4("Network Graph", style={'display': 'inline-block', 'marginRight': '20px', 'color': '#000'}),
+            html.Button("📊 Save Graph as PNG", 
+                       id='save-graph-btn',
+                       style={
+                           'backgroundColor': '#28a745',
+                           'color': 'white',
+                           'border': 'none',
+                           'padding': '10px 20px',
+                           'borderRadius': '5px',
+                           'cursor': 'pointer',
+                           'fontSize': '14px',
+                           'fontWeight': 'bold'
+                       }),
+            html.Div(id='graph-download-message', style={'display': 'inline-block', 'marginLeft': '20px', 'color': 'green', 'fontWeight': 'bold'})
+        ], style={'marginBottom': '10px'}),
+        dcc.Graph(id='network-graph'),
+        dcc.Download(id="download-graph")
     ], style={'width': '100%', 'marginTop': '20px', 'marginBottom': '30px'}),
     
-    # Table (BOTTOM - Full Width)
+    # Table (BOTTOM - Full Width) with Export Button
     html.Div([
-        html.H4("Sample Pairs Above Threshold", 
-               style={'color': '#000', 'textAlign': 'center', 'marginBottom': '15px'}),
+        html.Div([
+            html.H4("Sample Pairs Above Threshold", style={'display': 'inline-block', 'marginRight': '20px', 'color': '#000'}),
+            html.Button("📥 Save Table as CSV", 
+                       id='save-table-btn',
+                       style={
+                           'backgroundColor': '#007bff',
+                           'color': 'white',
+                           'border': 'none',
+                           'padding': '10px 20px',
+                           'borderRadius': '5px',
+                           'cursor': 'pointer',
+                           'fontSize': '14px',
+                           'fontWeight': 'bold'
+                       }),
+            html.Div(id='table-download-message', style={'display': 'inline-block', 'marginLeft': '20px', 'color': 'green', 'fontWeight': 'bold'})
+        ], style={'marginBottom': '15px', 'textAlign': 'center'}),
         dash_table.DataTable(
             id='edge-table',
             columns=[
@@ -268,13 +277,11 @@ app.layout = html.Div([
             filter_options={'case': 'insensitive'},
             page_action='native',
             page_size=10,
-            row_selectable='single'
-        )
-    ], style={'width': '100%', 'marginTop': '10px'}),
-    
-    # Hidden download components
-    dcc.Download(id="download-csv"),
-    dcc.Download(id="download-excel"),
+            row_selectable='single',
+            export_format='none'  # We handle export manually for more control
+        ),
+        dcc.Download(id="download-table")
+    ], style={'width': '100%', 'marginTop': '10px'})
     
 ], style={'backgroundColor': '#ffffff', 'color': '#000', 'padding': '20px', 'fontFamily': 'Arial, sans-serif'})
 
@@ -306,6 +313,110 @@ def sync_slider_to_input(sj, se, sc, st):
 )
 def sync_input_to_slider(wj, we, wc, th):
     return wj, we, wc, th
+
+# -------------------------------
+# Store current data for export
+# -------------------------------
+@app.callback(
+    Output('current-data-store', 'data'),
+    [Input('w-jaccard', 'value'),
+     Input('w-euclidean', 'value'),
+     Input('w-cosine', 'value'),
+     Input('threshold', 'value'),
+     Input('chemical-dropdown', 'value')]
+)
+def store_current_data(w_j, w_e, w_c, threshold, selected_substance):
+    """Store current filtered data for export"""
+    try:
+        # Convert percentages to normalized weights
+        total = (w_j or 0) + (w_e or 0) + (w_c or 0)
+        if total == 0:
+            w_j_norm = w_e_norm = w_c_norm = 0
+        else:
+            w_j_norm = (w_j or 0) / total
+            w_e_norm = (w_e or 0) / total
+            w_c_norm = (w_c or 0) / total
+
+        df = df_merged.copy()
+
+        # Filter by chemical substances
+        if selected_substance and 'All' not in selected_substance:
+            df = df[df['Key_Substances'].apply(
+                lambda x: any(sub in str(x).split(', ') for sub in selected_substance) if pd.notna(x) else False
+            )]
+
+        # Calculate joint similarity
+        df['Joint_Similarity'] = (w_j_norm * df['Jaccard'] + 
+                                 w_e_norm * df['Euclidean'] + 
+                                 w_c_norm * df['Cosine'])
+
+        # Apply threshold (convert percentage to 0-1)
+        threshold_norm = (threshold or 0) / 100
+        df_edges = df[df['Joint_Similarity'] >= threshold_norm].copy()
+
+        # Remove duplicates (keep highest similarity)
+        df_edges = df_edges.sort_values('Joint_Similarity', ascending=False)
+        df_edges = df_edges.drop_duplicates(subset=['Sample_1', 'Sample_2'])
+        
+        return df_edges.to_dict('records')
+    
+    except Exception as e:
+        return []
+
+# -------------------------------
+# Export Table as CSV
+# -------------------------------
+@app.callback(
+    [Output("download-table", "data"),
+     Output('table-download-message', 'children')],
+    Input("save-table-btn", "n_clicks"),
+    State('current-data-store', 'data'),
+    prevent_initial_call=True
+)
+def export_table(n_clicks, current_data):
+    if n_clicks and current_data:
+        # Convert back to DataFrame
+        df = pd.DataFrame(current_data)
+        
+        # Create filename with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"similarity_network_table_{timestamp}.csv"
+        
+        # Return CSV download
+        return [
+            dcc.send_data_frame(df.to_csv, filename, index=False),
+            f"✅ Table saved as {filename}"
+        ]
+    
+    return [None, ""]
+
+# -------------------------------
+# Export Graph as PNG
+# -------------------------------
+@app.callback(
+    [Output("download-graph", "data"),
+     Output('graph-download-message', 'children')],
+    Input("save-graph-btn", "n_clicks"),
+    State('network-graph', 'figure'),
+    prevent_initial_call=True
+)
+def export_graph(n_clicks, current_figure):
+    if n_clicks and current_figure:
+        try:
+            # Create filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"similarity_network_graph_{timestamp}.png"
+            
+            # Convert figure to PNG (this would require kaleido)
+            # For now, we'll provide instructions
+            message = "📊 Right-click on the graph and select 'Save image as...' to save as PNG"
+            
+            return [None, message]
+            
+        except Exception as e:
+            return [None, f"❌ Error: {str(e)}"]
+    
+    return [None, ""]
 
 # -------------------------------
 # Main callback to update graph, table, and display box
@@ -408,46 +519,9 @@ def update_network(w_j, w_e, w_c, threshold, selected_substance):
         return error_fig, [], error_message
 
 # -------------------------------
-# Save functionality callbacks
+# Store component (add this to your layout callbacks)
 # -------------------------------
-@app.callback(
-    Output("download-csv", "data"),
-    Input("save-table-btn", "n_clicks"),
-    State('edge-table', 'data'),
-    prevent_initial_call=True
-)
-def save_table_csv(n_clicks, table_data):
-    if n_clicks:
-        df = pd.DataFrame(table_data)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"network_analysis_{timestamp}.csv"
-        return dcc.send_data_frame(df.to_csv, filename, index=False)
-
-@app.callback(
-    Output("download-excel", "data"),
-    Input("save-excel-btn", "n_clicks"),
-    State('edge-table', 'data'),
-    prevent_initial_call=True
-)
-def save_table_excel(n_clicks, table_data):
-    if n_clicks:
-        df = pd.DataFrame(table_data)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"network_analysis_{timestamp}.xlsx"
-        return dcc.send_data_frame(df.to_excel, filename, index=False)
-
-@app.callback(
-    Output('network-graph', 'figure', allow_duplicate=True),
-    Input('save-diagram-btn', 'n_clicks'),
-    State('network-graph', 'figure'),
-    prevent_initial_call=True
-)
-def save_network_diagram(n_clicks, current_figure):
-    if n_clicks and current_figure:
-        # Plotly figures can be saved using the built-in camera icon
-        # This callback ensures the button works, but actual download is handled by Plotly
-        return current_figure
-    return current_figure
+app.layout.children.append(dcc.Store(id='current-data-store'))
 
 # -------------------------------
 # Additional callback for row selection highlighting
