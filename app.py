@@ -9,8 +9,57 @@ import os
 import base64
 import io
 from datetime import datetime
+import threading
+import requests
+import time
+import atexit
 
 print("🚀 Starting Joint Weighted Network Application...")
+
+# -------------------------------
+# Keep-Alive Function
+# -------------------------------
+def keep_alive():
+    """Ping the app every 10 minutes to prevent sleep"""
+    while True:
+        try:
+            # Get the actual Render URL (works in production)
+            render_url = os.environ.get('RENDER_EXTERNAL_URL')
+            if not render_url:
+                # Fallback: try to construct the URL from Render info
+                service_name = os.environ.get('RENDER_SERVICE_NAME')
+                if service_name:
+                    render_url = f"https://{service_name}.onrender.com"
+                else:
+                    # If we can't determine the URL, skip pinging
+                    print("⚠️  Could not determine Render URL for keep-alive")
+                    time.sleep(600)
+                    continue
+            
+            print(f"🔄 Sending keep-alive ping to: {render_url}")
+            response = requests.get(render_url, timeout=10)
+            if response.status_code == 200:
+                print("✅ Keep-alive ping successful")
+            else:
+                print(f"⚠️  Keep-alive ping returned status: {response.status_code}")
+                
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Keep-alive ping failed: {e}")
+        except Exception as e:
+            print(f"❌ Unexpected error in keep-alive: {e}")
+        
+        # Wait 10 minutes before next ping
+        time.sleep(600)  # 600 seconds = 10 minutes
+
+def start_keep_alive():
+    """Start the keep-alive thread only in production on Render"""
+    if os.environ.get('RENDER'):
+        print("🔧 Starting keep-alive service...")
+        keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+        keep_alive_thread.start()
+        print("✅ Keep-alive service started (pings every 10 minutes)")
+    else:
+        print("🔧 Running locally - keep-alive disabled")
 
 # -------------------------------
 # Load and process data
@@ -61,7 +110,7 @@ app.title = "Joint Weighted Network GUI"
 server = app.server  # Important for deployment
 
 # -------------------------------
-# Helper Functions
+# Helper Functions (your existing functions remain the same)
 # -------------------------------
 def validate_weights(w_j, w_e, w_c, threshold):
     """Validate input weights and threshold"""
@@ -157,7 +206,7 @@ def weight_input_block(label, input_id, slider_id, default_value):
     ], style={'padding':'15px', 'margin':'10px', 'backgroundColor':'#f8f9fa', 'borderRadius':'8px'})
 
 # -------------------------------
-# Layout (Stacked - Graph TOP, Table BOTTOM)
+# Layout (your existing layout remains exactly the same)
 # -------------------------------
 app.layout = html.Div([
     html.H1("Joint Weighted Network Visualization", 
@@ -283,7 +332,7 @@ app.layout = html.Div([
 ], style={'backgroundColor': '#ffffff', 'color': '#000', 'padding': '20px', 'fontFamily': 'Arial, sans-serif'})
 
 # -------------------------------
-# Two-way sync between sliders and inputs
+# Callbacks (your existing callbacks remain exactly the same)
 # -------------------------------
 @app.callback(
     [Output('w-jaccard', 'value'),
@@ -311,9 +360,6 @@ def sync_slider_to_input(sj, se, sc, st):
 def sync_input_to_slider(wj, we, wc, th):
     return wj, we, wc, th
 
-# -------------------------------
-# Main callback to update graph, table, and display box
-# -------------------------------
 @app.callback(
     [Output('network-graph', 'figure'),
      Output('edge-table', 'data'),
@@ -411,9 +457,6 @@ def update_network(w_j, w_e, w_c, threshold, selected_substance):
         error_message = html.Div(f"❌ Error: {str(e)}", style={'color': 'red', 'fontWeight': 'bold'})
         return error_fig, [], error_message
 
-# -------------------------------
-# Save functionality callbacks
-# -------------------------------
 @app.callback(
     Output("download-csv", "data"),
     Input("save-table-btn", "n_clicks"),
@@ -462,9 +505,6 @@ def save_network_diagram(n_clicks, current_figure):
         filename = f"network_diagram_{timestamp}.png"
         return dcc.send_bytes(img_bytes, filename)
 
-# -------------------------------
-# Additional callback for row selection highlighting
-# -------------------------------
 @app.callback(
     Output('network-graph', 'figure', allow_duplicate=True),
     Input('edge-table', 'selected_rows'),
@@ -475,6 +515,11 @@ def highlight_selected_edge(selected_rows, current_figure):
     if not selected_rows or not current_figure:
         return current_figure
     return current_figure
+
+# -------------------------------
+# Start Keep-Alive Service
+# -------------------------------
+start_keep_alive()
 
 # -------------------------------
 # Run the app
