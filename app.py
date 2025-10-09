@@ -4,47 +4,51 @@ from dash.dependencies import Input, Output, State
 import pandas as pd
 import networkx as nx
 import plotly.graph_objects as go
+import numpy as np
 import os
 
-print("Loading data...")
+print("🚀 Starting Joint Weighted Network Application...")
 
 # -------------------------------
-# Load similarity tables
+# Load and process data
 # -------------------------------
 try:
+    print("📊 Loading similarity tables...")
     df_jac = pd.read_csv("similarity_jaccard.csv")
     df_euc = pd.read_csv("similarity_euclidean_normalized.csv")
     df_cos = pd.read_csv("cosine_similarity_results.csv")
     df_substance = pd.read_csv("Joint_Similarity_Substance.csv")
-    print("All CSV files loaded successfully!")
+    print("✅ All CSV files loaded successfully!")
 except Exception as e:
-    print(f"Error loading CSV files: {e}")
+    print(f"❌ Error loading CSV files: {e}")
+    raise
 
 # Rename similarity columns
-df_jac.rename(columns={'Jaccard_Similarity':'Jaccard'}, inplace=True)
-df_euc.rename(columns={'Euclidean_Similarity':'Euclidean'}, inplace=True)
-df_cos.rename(columns={'Cosine_Similarity':'Cosine'}, inplace=True)
+df_jac.rename(columns={'Jaccard_Similarity': 'Jaccard'}, inplace=True)
+df_euc.rename(columns={'Euclidean_Similarity': 'Euclidean'}, inplace=True)
+df_cos.rename(columns={'Cosine_Similarity': 'Cosine'}, inplace=True)
 
 # Merge similarity tables
-df_merged = df_jac.merge(df_euc, on=['Sample_1','Sample_2']).merge(df_cos, on=['Sample_1','Sample_2'])
+df_merged = df_jac.merge(df_euc, on=['Sample_1', 'Sample_2']).merge(df_cos, on=['Sample_1', 'Sample_2'])
 
 # Aggregate substances per sample pair
 df_substance = (
-    df_substance.groupby(['Sample_1','Sample_2'])['Common_Substance']
+    df_substance.groupby(['Sample_1', 'Sample_2'])['Common_Substance']
     .apply(lambda x: ', '.join(sorted(set(x.dropna()))))
     .reset_index()
-    .rename(columns={'Common_Substance':'Key_Substances'})
+    .rename(columns={'Common_Substance': 'Key_Substances'})
 )
 
 # Merge aggregated substance info
-df_merged = df_merged.merge(df_substance, on=['Sample_1','Sample_2'], how='left')
+df_merged = df_merged.merge(df_substance, on=['Sample_1', 'Sample_2'], how='left')
 
 # Generate dropdown list (unique substances)
 substances = ['All'] + sorted(
     set(sum([s.split(', ') for s in df_merged['Key_Substances'].dropna()], []))
 )
 
-print(f"Data processing complete. Found {len(substances)} unique substances.")
+print(f"✅ Data processing complete. Found {len(substances)} unique substances.")
+print(f"✅ Total sample pairs: {len(df_merged)}")
 
 # -------------------------------
 # Initialize Dash app
@@ -54,71 +58,196 @@ app.title = "Joint Weighted Network GUI"
 server = app.server  # Important for deployment
 
 # -------------------------------
-# Layout
+# Helper Functions
 # -------------------------------
+def validate_weights(w_j, w_e, w_c, threshold):
+    """Validate input weights and threshold"""
+    weights = [w_j or 0, w_e or 0, w_c or 0]
+    
+    if any(w < 0 or w > 100 for w in weights + [threshold or 0]):
+        raise ValueError("Weights and threshold must be between 0-100")
+    
+    return weights
+
+def create_enhanced_network(G, df_edges):
+    """Create enhanced network visualization with colored edges"""
+    pos = nx.spring_layout(G, seed=42, k=1, iterations=50)
+    
+    # Create edge traces with color based on weight
+    edge_traces = []
+    for u, v in G.edges():
+        x0, y0 = pos[u]
+        x1, y1 = pos[v]
+        weight = G[u][v]['weight']
+        
+        # Color based on weight (darker blue for higher weights)
+        color_intensity = max(0.3, weight)  # Ensure minimum visibility
+        color = f'rgba(30, 136, 229, {color_intensity})'
+        
+        edge_trace = go.Scatter(
+            x=[x0, x1, None], 
+            y=[y0, y1, None],
+            line=dict(width=2 + weight * 5, color=color),
+            hoverinfo='text',
+            text=f"{u}-{v}: {weight:.3f}",
+            mode='lines',
+            showlegend=False
+        )
+        edge_traces.append(edge_trace)
+    
+    # Create node trace
+    node_x, node_y, node_text, node_hover = [], [], [], []
+    for node in G.nodes():
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        node_text.append(node)
+        neighbors = list(G.neighbors(node))
+        node_hover.append(f"Sample: {node}<br>Connections: {len(neighbors)}")
+    
+    node_trace = go.Scatter(
+        x=node_x, y=node_y,
+        mode='markers+text',
+        text=node_text,
+        hovertext=node_hover,
+        hoverinfo='text',
+        textposition='middle center',
+        marker=dict(
+            size=20,
+            color='lightblue',
+            line=dict(width=2, color='darkblue')
+        ),
+        showlegend=False
+    )
+    
+    fig = go.Figure()
+    for trace in edge_traces:
+        fig.add_trace(trace)
+    fig.add_trace(node_trace)
+    
+    fig.update_layout(
+        title="Weighted Similarity Network",
+        showlegend=False,
+        hovermode='closest',
+        margin=dict(b=20, l=5, r=5, t=40),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        height=700,
+        plot_bgcolor='white'
+    )
+    
+    return fig
+
 def weight_input_block(label, input_id, slider_id, default_value):
     """Reusable block for weight input and slider"""
     return html.Div([
-        html.Label(f"{label} (%)", style={'fontSize':'18px', 'fontWeight':'bold', 'color':'#000'}),
+        html.Label(f"{label} (%)", style={'fontSize':'16px', 'fontWeight':'bold', 'color':'#000'}),
         dcc.Input(
             id=input_id, type='number', value=default_value, min=0, max=100, step=1,
-            style={'width':'150px', 'height':'40px', 'fontSize':'18px', 'textAlign':'center', 'marginBottom':'10px'}
+            style={'width':'120px', 'height':'35px', 'fontSize':'16px', 'textAlign':'center', 'marginBottom':'10px'}
         ),
         dcc.Slider(
             id=slider_id, min=0, max=100, step=1, value=default_value,
             tooltip={"placement": "bottom", "always_visible": True},
             marks={i: str(i) for i in range(0, 101, 20)}
         )
-    ], style={'padding':'10px'})
+    ], style={'padding':'15px', 'margin':'10px', 'backgroundColor':'#f8f9fa', 'borderRadius':'8px'})
 
+# -------------------------------
+# Layout
+# -------------------------------
 app.layout = html.Div([
-    html.H1("Joint Weighted Network Visualization", style={'textAlign':'center', 'color':'#000'}),
-
-    # Input + Slider blocks
-    weight_input_block("Jaccard Weight", "w-jaccard", "slider-jaccard", 35),
-    weight_input_block("Euclidean Weight", "w-euclidean", "slider-euclidean", 30),
-    weight_input_block("Cosine Weight", "w-cosine", "slider-cosine", 35),
-    weight_input_block("Threshold", "threshold", "slider-threshold", 90),
-
+    html.H1("Joint Weighted Network Visualization", 
+            style={'textAlign': 'center', 'color': '#000', 'marginBottom': '30px'}),
+    
+    # Weights configuration section
     html.Div([
-        html.Label("Select Chemical Component(s):", style={'fontSize':'18px', 'fontWeight':'bold', 'color':'#000'}),
+        html.H3("Similarity Weights Configuration", 
+               style={'color': '#000', 'borderBottom': '2px solid #ccc', 'paddingBottom': '10px'}),
+        html.Div([
+            html.Div([
+                weight_input_block("Jaccard Weight", "w-jaccard", "slider-jaccard", 35),
+                weight_input_block("Euclidean Weight", "w-euclidean", "slider-euclidean", 30),
+                weight_input_block("Cosine Weight", "w-cosine", "slider-cosine", 35),
+            ], style={'display': 'flex', 'justifyContent': 'space-between', 'flexWrap': 'wrap'}),
+            
+            html.Div([
+                weight_input_block("Similarity Threshold", "threshold", "slider-threshold", 90),
+            ], style={'width': '50%', 'margin': '20px auto'})
+        ])
+    ], style={'backgroundColor': '#ffffff', 'padding': '20px', 'borderRadius': '10px', 'marginBottom': '20px', 'border': '1px solid #ddd'}),
+    
+    # Chemical filter section
+    html.Div([
+        html.H3("Filter by Chemical Components", style={'color': '#000', 'marginBottom': '15px'}),
         dcc.Dropdown(
             id='chemical-dropdown',
             options=[{'label': s, 'value': s} for s in substances],
             value=['All'],
             multi=True,
             clearable=True,
-            style={'fontSize':'16px'}
+            style={'fontSize': '16px'},
+            placeholder="Select chemical components..."
         )
-    ], style={'padding':'10px','width':'50%'}),
-
-    # Display box
+    ], style={'padding': '20px', 'marginBottom': '20px', 'backgroundColor': '#f8f9fa', 'borderRadius': '8px'}),
+    
+    # Results display
     html.Div(id='joint-similarity-display', style={
-        'border':'2px solid #888', 
-        'padding':'15px', 
-        'margin':'10px', 
-        'backgroundColor':'#ffffff', 
-        'color':'#000', 
-        'fontSize':'18px',
-        'fontWeight':'bold'
+        'border': '2px solid #007bff', 
+        'padding': '15px', 
+        'margin': '10px', 
+        'backgroundColor': '#e7f3ff', 
+        'color': '#000', 
+        'fontSize': '16px',
+        'fontWeight': 'bold',
+        'borderRadius': '8px'
     }),
-
-    dcc.Graph(id='network-graph', style={'height':'700px'}),
-
-    html.H4("Sample pairs above threshold:", style={'color':'#000'}),
-    dash_table.DataTable(
-        id='edge-table',
-        columns=[
-            {'name':'Sample_1','id':'Sample_1'},
-            {'name':'Sample_2','id':'Sample_2'},
-            {'name':'Joint_Similarity','id':'Joint_Similarity'},
-            {'name':'Common_Substances','id':'Key_Substances'}
-        ],
-        style_table={'overflowX':'auto'},
-        style_cell={'textAlign':'center', 'fontSize':'16px'},
-        row_selectable='single'
-    )
-], style={'backgroundColor':'#ffffff', 'color':'#000', 'padding':'10px'})
+    
+    # Graph and table section
+    html.Div([
+        html.Div([
+            dcc.Graph(id='network-graph')
+        ], style={'width': '65%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+        
+        html.Div([
+            html.H4("Sample Pairs Above Threshold", 
+                   style={'color': '#000', 'textAlign': 'center', 'marginBottom': '15px'}),
+            dash_table.DataTable(
+                id='edge-table',
+                columns=[
+                    {'name': 'Sample 1', 'id': 'Sample_1', 'type': 'text'},
+                    {'name': 'Sample 2', 'id': 'Sample_2', 'type': 'text'},
+                    {'name': 'Joint Similarity', 'id': 'Joint_Similarity', 'type': 'numeric', 'format': {'specifier': '.3f'}},
+                    {'name': 'Common Substances', 'id': 'Key_Substances', 'type': 'text'}
+                ],
+                style_table={'overflowX': 'auto', 'maxHeight': '600px', 'overflowY': 'auto'},
+                style_cell={
+                    'textAlign': 'center', 
+                    'fontSize': '14px',
+                    'padding': '10px',
+                    'minWidth': '100px'
+                },
+                style_header={
+                    'backgroundColor': 'rgb(230, 230, 230)',
+                    'fontWeight': 'bold',
+                    'fontSize': '14px'
+                },
+                style_data_conditional=[
+                    {
+                        'if': {'row_index': 'odd'},
+                        'backgroundColor': 'rgb(248, 248, 248)'
+                    }
+                ],
+                sort_action='native',
+                filter_action='native',
+                page_action='native',
+                page_size=10,
+                row_selectable='single'
+            )
+        ], style={'width': '34%', 'display': 'inline-block', 'verticalAlign': 'top', 'paddingLeft': '20px'})
+    ], style={'marginTop': '20px'})
+    
+], style={'backgroundColor': '#ffffff', 'color': '#000', 'padding': '20px', 'fontFamily': 'Arial, sans-serif'})
 
 # -------------------------------
 # Two-way sync between sliders and inputs
@@ -150,108 +279,125 @@ def sync_input_to_slider(wj, we, wc, th):
     return wj, we, wc, th
 
 # -------------------------------
-# Callback to update graph, table, and display box
+# Main callback to update graph, table, and display box
 # -------------------------------
 @app.callback(
-    [Output('network-graph','figure'),
-     Output('edge-table','data'),
-     Output('joint-similarity-display','children')],
-    [Input('w-jaccard','value'),
-     Input('w-euclidean','value'),
-     Input('w-cosine','value'),
-     Input('threshold','value'),
-     Input('chemical-dropdown','value'),
-     Input('edge-table','selected_rows')]
+    [Output('network-graph', 'figure'),
+     Output('edge-table', 'data'),
+     Output('joint-similarity-display', 'children')],
+    [Input('w-jaccard', 'value'),
+     Input('w-euclidean', 'value'),
+     Input('w-cosine', 'value'),
+     Input('threshold', 'value'),
+     Input('chemical-dropdown', 'value')]
 )
-def update_network(w_j, w_e, w_c, threshold, selected_substance, selected_row):
-    # Convert percentages to normalized weights
-    total = (w_j or 0) + (w_e or 0) + (w_c or 0)
-    if total == 0:
-        w_j_norm = w_e_norm = w_c_norm = 0
-    else:
-        w_j_norm = (w_j or 0)/total
-        w_e_norm = (w_e or 0)/total
-        w_c_norm = (w_c or 0)/total
+def update_network(w_j, w_e, w_c, threshold, selected_substance):
+    try:
+        # Validate inputs
+        weights = validate_weights(w_j, w_e, w_c, threshold)
+        
+        # Convert percentages to normalized weights
+        total = (w_j or 0) + (w_e or 0) + (w_c or 0)
+        if total == 0:
+            w_j_norm = w_e_norm = w_c_norm = 0
+        else:
+            w_j_norm = (w_j or 0) / total
+            w_e_norm = (w_e or 0) / total
+            w_c_norm = (w_c or 0) / total
 
-    df = df_merged.copy()
+        df = df_merged.copy()
 
-    # Filter by chemical substances
-    if 'All' not in selected_substance:
-        df = df[df['Key_Substances'].apply(
-            lambda x: any(sub in str(x).split(', ') for sub in selected_substance)
-        )]
+        # Filter by chemical substances
+        if selected_substance and 'All' not in selected_substance:
+            df = df[df['Key_Substances'].apply(
+                lambda x: any(sub in str(x).split(', ') for sub in selected_substance) if pd.notna(x) else False
+            )]
 
-    # Calculate joint similarity
-    df['Joint_Similarity'] = w_j_norm*df['Jaccard'] + w_e_norm*df['Euclidean'] + w_c_norm*df['Cosine']
+        # Calculate joint similarity
+        df['Joint_Similarity'] = (w_j_norm * df['Jaccard'] + 
+                                 w_e_norm * df['Euclidean'] + 
+                                 w_c_norm * df['Cosine'])
 
-    # Apply threshold (convert percentage to 0-1)
-    threshold_norm = (threshold or 0)/100
-    df_edges = df[df['Joint_Similarity'] >= threshold_norm].copy()
+        # Apply threshold (convert percentage to 0-1)
+        threshold_norm = (threshold or 0) / 100
+        df_edges = df[df['Joint_Similarity'] >= threshold_norm].copy()
 
-    # Remove duplicates (keep highest)
-    df_edges = df_edges.sort_values('Joint_Similarity', ascending=False).drop_duplicates(subset=['Sample_1','Sample_2'])
+        # Remove duplicates (keep highest similarity)
+        df_edges = df_edges.sort_values('Joint_Similarity', ascending=False)
+        df_edges = df_edges.drop_duplicates(subset=['Sample_1', 'Sample_2'])
 
-    # Build network
-    G = nx.Graph()
-    for _, row in df_edges.iterrows():
-        G.add_edge(row['Sample_1'], row['Sample_2'], weight=row['Joint_Similarity'])
+        # Build network
+        G = nx.Graph()
+        for _, row in df_edges.iterrows():
+            G.add_edge(row['Sample_1'], row['Sample_2'], weight=row['Joint_Similarity'])
 
-    pos = nx.spring_layout(G, seed=42)
-    # Draw edges
-    edge_x, edge_y = [], []
-    for u, v in G.edges():
-        x0, y0 = pos[u]
-        x1, y1 = pos[v]
-        edge_x += [x0, x1, None]
-        edge_y += [y0, y1, None]
+        # Create enhanced network visualization
+        if len(G.nodes()) > 0:
+            fig = create_enhanced_network(G, df_edges)
+        else:
+            # Empty graph if no edges meet threshold
+            fig = go.Figure()
+            fig.update_layout(
+                title="No edges meet the current threshold",
+                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                height=700,
+                plot_bgcolor='white'
+            )
 
-    edge_trace = go.Scatter(
-        x=edge_x, y=edge_y,
-        line=dict(width=2, color='#888'),
-        mode='lines'
-    )
+        # Prepare table data
+        table_data = df_edges[['Sample_1', 'Sample_2', 'Joint_Similarity', 'Key_Substances']].to_dict('records')
 
-    # Draw nodes
-    node_x, node_y, node_text = [], [], []
-    for node in G.nodes():
-        x, y = pos[node]
-        node_x.append(x)
-        node_y.append(y)
-        node_text.append(node)
+        # Display box content
+        if total != 100:
+            warning = html.P("⚠ Warning: Weights are unbalanced! Total ≠ 100%", 
+                           style={'color': 'red', 'fontWeight': 'bold', 'margin': '5px 0'})
+        else:
+            warning = None
 
-    node_trace = go.Scatter(
-        x=node_x, y=node_y,
-        mode='markers+text',
-        text=node_text,
-        textposition='bottom left',
-        marker=dict(color='#1f78b4', size=10)
-    )
+        stats_info = html.Div([
+            html.P(f"📊 Network Statistics: {len(G.nodes())} nodes, {len(G.edges())} edges", 
+                  style={'margin': '5px 0', 'fontWeight': 'bold'}),
+            html.P(f"🧮 Joint Similarity = ({w_j_norm:.3f} × Jaccard) + ({w_e_norm:.3f} × Euclidean) + ({w_c_norm:.3f} × Cosine)",
+                  style={'margin': '5px 0'}),
+            html.P(f"⚖️ Weights: Jaccard: {w_j or 0}%, Euclidean: {w_e or 0}%, Cosine: {w_c or 0}% | Threshold: {threshold or 0}%",
+                  style={'margin': '5px 0'})
+        ])
 
-    fig = go.Figure()
-    fig.add_trace(edge_trace)
-    fig.add_trace(node_trace)
-    fig.update_layout(title="Weighted Similarity Network",
-                      showlegend=False,
-                      hovermode='closest',
-                      margin=dict(b=20,l=5,r=5,t=40),
-                      xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                      yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
+        display_content = html.Div([stats_info, warning] if warning else [stats_info])
 
-    table_data = df_edges[['Sample_1','Sample_2','Joint_Similarity','Key_Substances']].to_dict('records')
+        return fig, table_data, display_content
 
-    # Display box: show formula and warning if sum != 100%
-    if total != 100:
-        warning = html.P("⚠ Weights are unbalanced! Total ≠ 100%", style={'color':'red'})
-    else:
-        warning = None
+    except Exception as e:
+        # Return empty results with error message
+        error_fig = go.Figure()
+        error_fig.update_layout(
+            title=f"Error: {str(e)}",
+            height=700
+        )
+        error_message = html.Div(f"❌ Error: {str(e)}", style={'color': 'red', 'fontWeight': 'bold'})
+        return error_fig, [], error_message
 
-    display_text = html.Div([
-        html.P(f"Joint Similarity = ({w_j_norm:.2f} × Jaccard) + ({w_e_norm:.2f} × Euclidean) + ({w_c_norm:.2f} × Cosine)"),
-        html.P(f"Current Weights → Jaccard: {w_j or 0}%, Euclidean: {w_e or 0}%, Cosine: {w_c or 0}%"),
-        warning
-    ], style={'fontSize':'18px', 'color':'#000'})
+# -------------------------------
+# Additional callback for row selection highlighting
+# -------------------------------
+@app.callback(
+    Output('network-graph', 'figure', allow_duplicate=True),
+    Input('edge-table', 'selected_rows'),
+    State('network-graph', 'figure'),
+    prevent_initial_call=True
+)
+def highlight_selected_edge(selected_rows, current_figure):
+    if not selected_rows or not current_figure:
+        return current_figure
+    
+    # This is a placeholder - you can enhance this to highlight selected edges
+    # For now, just return the current figure
+    return current_figure
 
-    return fig, table_data, display_text
-
+# -------------------------------
+# Run the app
+# -------------------------------
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    print("🌐 Starting web server...")
+    app.run_server(debug=False, host='0.0.0.0', port=8050)
