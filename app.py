@@ -172,7 +172,7 @@ app.layout = html.Div([
             ], style={'display': 'flex', 'justifyContent': 'space-between', 'flexWrap': 'wrap'}),
             
             html.Div([
-                weight_input_block("Similarity Threshold", "threshold", "slider-threshold", 90),
+                weight_input_block("Similarity Threshold", "threshold", "slider-threshold", 80),
             ], style={'width': '50%', 'margin': '20px auto'})
         ])
     ], style={'backgroundColor': '#ffffff', 'padding': '20px', 'borderRadius': '10px', 'marginBottom': '20px', 'border': '1px solid #ddd'}),
