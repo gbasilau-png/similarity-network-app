@@ -66,10 +66,10 @@ def start_keep_alive():
 # -------------------------------
 try:
     print("📊 Loading similarity tables...")
-    df_jac = pd.read_csv("similarity_jaccard.csv")
-    df_euc = pd.read_csv("similarity_euclidean_normalized.csv")
-    df_cos = pd.read_csv("cosine_similarity_results.csv")
-    df_substance = pd.read_csv("Joint_Similarity_Substance.csv")
+    df_jac = pd.read_csv("jaccard_similarity_pairs.csv")
+    df_euc = pd.read_csv("euclid_normalised_pairs.csv")
+    df_cos = pd.read_csv("cosine_similarity_pairs.csv")
+    df_substance = pd.read_csv("Joint_similarity_with_common_substances.csv")
     print("✅ All CSV files loaded successfully!")
 except Exception as e:
     print(f"❌ Error loading CSV files: {e}")
