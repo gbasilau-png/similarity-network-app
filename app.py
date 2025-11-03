@@ -17,21 +17,33 @@ import atexit
 print("🚀 Starting Joint Weighted Network Application...")
 
 # -------------------------------
-# Keep-Alive Function
+# Environment Detection
+# -------------------------------
+def is_docker():
+    return os.path.exists('/.dockerenv')
+
+def get_bind_address():
+    """Get the correct bind address based on environment"""
+    return '0.0.0.0' if is_docker() else '127.0.0.1'
+
+# -------------------------------
+# Keep-Alive Function (Render-specific)
 # -------------------------------
 def keep_alive():
-    """Ping the app every 10 minutes to prevent sleep"""
+    """Ping the app every 10 minutes to prevent sleep (Render only)"""
     while True:
         try:
-            # Get the actual Render URL (works in production)
+            # Only run keep-alive if we're on Render
+            if not os.environ.get('RENDER'):
+                print("🔧 Local/Docker environment - keep-alive disabled")
+                break
+                
             render_url = os.environ.get('RENDER_EXTERNAL_URL')
             if not render_url:
-                # Fallback: try to construct the URL from Render info
                 service_name = os.environ.get('RENDER_SERVICE_NAME')
                 if service_name:
                     render_url = f"https://{service_name}.onrender.com"
                 else:
-                    # If we can't determine the URL, skip pinging
                     print("⚠️  Could not determine Render URL for keep-alive")
                     time.sleep(600)
                     continue
@@ -49,7 +61,7 @@ def keep_alive():
             print(f"❌ Unexpected error in keep-alive: {e}")
         
         # Wait 10 minutes before next ping
-        time.sleep(600)  # 600 seconds = 10 minutes
+        time.sleep(600)
 
 def start_keep_alive():
     """Start the keep-alive thread only in production on Render"""
@@ -59,7 +71,7 @@ def start_keep_alive():
         keep_alive_thread.start()
         print("✅ Keep-alive service started (pings every 10 minutes)")
     else:
-        print("🔧 Running locally - keep-alive disabled")
+        print("🔧 Running in Docker/Local - keep-alive disabled")
 
 # -------------------------------
 # Load and process data
@@ -73,31 +85,48 @@ try:
     print("✅ All CSV files loaded successfully!")
 except Exception as e:
     print(f"❌ Error loading CSV files: {e}")
-    raise
+    # Create empty DataFrames to prevent crashes
+    df_jac = pd.DataFrame(columns=['Sample_1', 'Sample_2', 'Jaccard_Similarity'])
+    df_euc = pd.DataFrame(columns=['Sample_1', 'Sample_2', 'Euclidean_Similarity'])
+    df_cos = pd.DataFrame(columns=['Sample_1', 'Sample_2', 'Cosine_Similarity'])
+    df_substance = pd.DataFrame(columns=['Sample_1', 'Sample_2', 'Common_Substance'])
 
 # Rename similarity columns
-df_jac.rename(columns={'Jaccard_Similarity': 'Jaccard'}, inplace=True)
-df_euc.rename(columns={'Euclidean_Similarity': 'Euclidean'}, inplace=True)
-df_cos.rename(columns={'Cosine_Similarity': 'Cosine'}, inplace=True)
+if not df_jac.empty:
+    df_jac.rename(columns={'Jaccard_Similarity': 'Jaccard'}, inplace=True)
+if not df_euc.empty:
+    df_euc.rename(columns={'Euclidean_Similarity': 'Euclidean'}, inplace=True)
+if not df_cos.empty:
+    df_cos.rename(columns={'Cosine_Similarity': 'Cosine'}, inplace=True)
 
 # Merge similarity tables
-df_merged = df_jac.merge(df_euc, on=['Sample_1', 'Sample_2']).merge(df_cos, on=['Sample_1', 'Sample_2'])
-
-# Aggregate substances per sample pair
-df_substance = (
-    df_substance.groupby(['Sample_1', 'Sample_2'])['Common_Substance']
-    .apply(lambda x: ', '.join(sorted(set(x.dropna()))))
-    .reset_index()
-    .rename(columns={'Common_Substance': 'Key_Substances'})
-)
-
-# Merge aggregated substance info
-df_merged = df_merged.merge(df_substance, on=['Sample_1', 'Sample_2'], how='left')
+try:
+    df_merged = df_jac.merge(df_euc, on=['Sample_1', 'Sample_2']).merge(df_cos, on=['Sample_1', 'Sample_2'])
+    
+    # Aggregate substances per sample pair
+    if not df_substance.empty:
+        df_substance_agg = (
+            df_substance.groupby(['Sample_1', 'Sample_2'])['Common_Substance']
+            .apply(lambda x: ', '.join(sorted(set(x.dropna()))))
+            .reset_index()
+            .rename(columns={'Common_Substance': 'Key_Substances'})
+        )
+        # Merge aggregated substance info
+        df_merged = df_merged.merge(df_substance_agg, on=['Sample_1', 'Sample_2'], how='left')
+    else:
+        df_merged['Key_Substances'] = ''
+        
+except Exception as e:
+    print(f"❌ Error merging data: {e}")
+    df_merged = pd.DataFrame(columns=['Sample_1', 'Sample_2', 'Jaccard', 'Euclidean', 'Cosine', 'Key_Substances'])
 
 # Generate dropdown list (unique substances)
-substances = ['All'] + sorted(
-    set(sum([s.split(', ') for s in df_merged['Key_Substances'].dropna()], []))
-)
+try:
+    substances = ['All'] + sorted(
+        set(sum([s.split(', ') for s in df_merged['Key_Substances'].dropna() if pd.notna(s)], []))
+    )
+except:
+    substances = ['All']
 
 print(f"✅ Data processing complete. Found {len(substances)} unique substances.")
 print(f"✅ Total sample pairs: {len(df_merged)}")
@@ -106,11 +135,15 @@ print(f"✅ Total sample pairs: {len(df_merged)}")
 # Initialize Dash app
 # -------------------------------
 app = dash.Dash(__name__)
-app.title = "Joint Weighted Network GUI"
-server = app.server  # Important for deployment
+server = app.server
+
+# Add health check endpoint for Docker
+@server.route('/health')
+def health_check():
+    return {'status': 'healthy', 'timestamp': datetime.now().isoformat(), 'environment': 'docker' if is_docker() else 'local'}
 
 # -------------------------------
-# Helper Functions (your existing functions remain the same)
+# Helper Functions (remain the same)
 # -------------------------------
 def validate_weights(w_j, w_e, w_c, threshold):
     """Validate input weights and threshold"""
@@ -206,7 +239,7 @@ def weight_input_block(label, input_id, slider_id, default_value):
     ], style={'padding':'15px', 'margin':'10px', 'backgroundColor':'#f8f9fa', 'borderRadius':'8px'})
 
 # -------------------------------
-# Layout (your existing layout remains exactly the same)
+# Layout (remain the same)
 # -------------------------------
 app.layout = html.Div([
     html.H1("Joint Weighted Network Visualization", 
@@ -332,7 +365,7 @@ app.layout = html.Div([
 ], style={'backgroundColor': '#ffffff', 'color': '#000', 'padding': '20px', 'fontFamily': 'Arial, sans-serif'})
 
 # -------------------------------
-# Callbacks (your existing callbacks remain exactly the same)
+# Callbacks (remain the same)
 # -------------------------------
 @app.callback(
     [Output('w-jaccard', 'value'),
@@ -517,13 +550,30 @@ def highlight_selected_edge(selected_rows, current_figure):
     return current_figure
 
 # -------------------------------
-# Start Keep-Alive Service
+# Initialize Keep-Alive Service
 # -------------------------------
 start_keep_alive()
 
 # -------------------------------
-# Run the app
+# Application Entry Point
 # -------------------------------
+def main():
+    """Main application entry point"""
+    print(f"🏃‍♂️ Starting application in {'Docker' if is_docker() else 'Local'} environment")
+    print(f"🌐 Server will be available at: {get_bind_address()}:8050")
+    
+    # In production (Gunicorn), we don't call app.run_server()
+    if __name__ == '__main__':
+        print("🔧 Running in development mode...")
+        app.run_server(
+            debug=False, 
+            host=get_bind_address(), 
+            port=8050,
+            dev_tools_hot_reload=False
+        )
+    else:
+        print("🚀 Application loaded by Gunicorn - ready for production!")
+
+# Execute the application
 if __name__ == '__main__':
-    print("🌐 Starting web server...")
-    app.run_server(debug=False, host='0.0.0.0', port=8050)
+    main()
